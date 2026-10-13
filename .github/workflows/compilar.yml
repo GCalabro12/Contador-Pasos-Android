@@ -23,6 +23,9 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      - name: Versión (la misma numeración que la web)
+        run: echo "VERSION_NAME=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_ENV"
+
       - name: Clave de firma
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/pasos.p12"
 
@@ -31,7 +34,6 @@ jobs:
           KEYSTORE_FILE: ${{ runner.temp }}/pasos.p12
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           VERSION_CODE: ${{ github.run_number }}
-          VERSION_NAME: 1.${{ github.run_number }}
         run: gradle assembleRelease --no-daemon --stacktrace
 
       - name: Preparar APK
@@ -40,8 +42,8 @@ jobs:
       - name: Publicar descarga
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.${{ github.run_number }}
-          name: Pasos 1.${{ github.run_number }}
+          tag_name: app-${{ github.run_number }}
+          name: Pasos v${{ env.VERSION_NAME }}
           body: |
             Descarga **Pasos.apk** en el móvil y ábrelo para instalar o actualizar.
             Enlace fijo a la última versión: https://github.com/${{ github.repository }}/releases/latest/download/Pasos.apk

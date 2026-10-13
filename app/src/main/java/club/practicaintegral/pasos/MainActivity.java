@@ -47,18 +47,48 @@ public class MainActivity extends Activity {
     private TextView overlayText;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final List<String> jsErrors = new ArrayList<>();
-    private boolean loaded;
+    private boolean loaded, problem;
+    private FrameLayout root;
 
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
-        FrameLayout root = new FrameLayout(this);
+        CrashLog.install(this);
+        root = new FrameLayout(this);
         root.setBackgroundColor(0xFF0F172A);
-        web = new WebView(this);
-        web.setBackgroundColor(0xFF0F172A);
-        root.addView(web, new FrameLayout.LayoutParams(-1, -1));
         root.addView(buildOverlay(), new FrameLayout.LayoutParams(-1, -1));
         setContentView(root);
+
+        // Si la última vez algo falló, se enseña aquí para poder arreglarlo
+        String crash = CrashLog.takeLast(this);
+        if (crash != null) showProblem("La última vez la app falló:\n" + crash);
+
+        handler.post(liveSteps);
+        askPermissions();
+        // El visor web se crea después de dibujar la pantalla: si falla, al menos se ve el contador
+        root.post(() -> handler.postDelayed(this::initWeb, 300));
+    }
+
+    // Pasos en grande en la capa nativa mientras carga (o si la web no se puede mostrar)
+    private final Runnable liveSteps = new Runnable() {
+        @Override public void run() {
+            if (!problem && overlay.getVisibility() == View.VISIBLE) {
+                overlayText.setText("👣\n\n" + String.format(new java.util.Locale("es", "ES"), "%,d", StepStore.steps(MainActivity.this))
+                        + " pasos hoy\n\nCargando la pantalla…");
+            }
+            handler.postDelayed(this, 2000);
+        }
+    };
+
+    private void initWeb() {
+        try {
+            web = new WebView(this);
+        } catch (Throwable t) {
+            showProblem("No se pudo abrir el visor web del teléfono:\n" + t);
+            return;
+        }
+        web.setBackgroundColor(0xFF0F172A);
+        root.addView(web, 0, new FrameLayout.LayoutParams(-1, -1));
 
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
@@ -121,8 +151,6 @@ public class MainActivity extends Activity {
         });
         web.loadUrl(WEB);
         handler.postDelayed(() -> { if (!loaded) showProblem("La página no termina de cargar."); }, 20000);
-
-        askPermissions();
     }
 
     /** Capa nativa encima de la web: «Cargando…» y, si algo falla, qué ha pasado y botones para arreglarlo. */
@@ -142,8 +170,9 @@ public class MainActivity extends Activity {
         Button retry = new Button(this);
         retry.setText("↻ Reintentar");
         retry.setOnClickListener(v -> {
-            loaded = false; jsErrors.clear();
+            loaded = false; problem = false; jsErrors.clear();
             overlayText.setText("👣\n\nCargando Pasos…");
+            if (web == null) { initWeb(); return; }
             web.loadUrl(WEB);
             handler.postDelayed(() -> { if (!loaded) showProblem("La página no termina de cargar."); }, 20000);
         });
@@ -156,7 +185,8 @@ public class MainActivity extends Activity {
     }
 
     private void showProblem(String what) {
-        if (loaded) return;
+        if (loaded && !what.startsWith("La última vez")) return;
+        problem = true;
         String wv = "?";
         PackageInfo p = WebView.getCurrentWebViewPackage();
         if (p != null) wv = p.packageName + " " + p.versionName;
@@ -195,12 +225,12 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
         StepService.start(this);
-        web.evaluateJavascript("window.nativeRefresh && window.nativeRefresh()", null);
+        if (web != null) web.evaluateJavascript("window.nativeRefresh && window.nativeRefresh()", null);
     }
 
     @Override
     public void onBackPressed() {
-        if (web.canGoBack()) web.goBack();
+        if (web != null && web.canGoBack()) web.goBack();
         else moveTaskToBack(true); // no se cierra: el contador y la música siguen
     }
 

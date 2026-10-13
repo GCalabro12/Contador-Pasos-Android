@@ -11,7 +11,20 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.PowerManager;
 import android.provider.Settings;
+import android.content.pm.PackageInfo;
+import android.net.http.SslError;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.Gravity;
+import android.view.View;
+import android.webkit.ConsoleMessage;
 import android.webkit.JavascriptInterface;
+import android.webkit.SslErrorHandler;
+import android.webkit.WebResourceResponse;
+import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
@@ -30,12 +43,22 @@ public class MainActivity extends Activity {
     private static final String WEB = "https://gcalabro12.github.io/Contador-Pasos/";
     private static final String HOST = "gcalabro12.github.io";
     private WebView web;
+    private LinearLayout overlay;
+    private TextView overlayText;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final List<String> jsErrors = new ArrayList<>();
+    private boolean loaded;
 
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(0xFF0F172A);
         web = new WebView(this);
-        setContentView(web);
+        web.setBackgroundColor(0xFF0F172A);
+        root.addView(web, new FrameLayout.LayoutParams(-1, -1));
+        root.addView(buildOverlay(), new FrameLayout.LayoutParams(-1, -1));
+        setContentView(root);
 
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
@@ -43,7 +66,14 @@ public class MainActivity extends Activity {
         s.setMediaPlaybackRequiresUserGesture(false);
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         web.addJavascriptInterface(new Bridge(), "AndroidPasos");
-        web.setWebChromeClient(new WebChromeClient());
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onConsoleMessage(ConsoleMessage m) {
+                if (m.messageLevel() == ConsoleMessage.MessageLevel.ERROR && jsErrors.size() < 6)
+                    jsErrors.add(m.message() + " (línea " + m.lineNumber() + ")");
+                return false;
+            }
+        });
         web.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest req) {
@@ -55,15 +85,99 @@ public class MainActivity extends Activity {
             }
 
             @Override
+            public void onPageFinished(WebView view, String url) {
+                if (url.startsWith("file:")) { loaded = true; overlay.setVisibility(View.GONE); return; }
+                // ¿Se ve algo? Si la página quedó vacía, se explica en pantalla
+                view.evaluateJavascript("(function(){try{return document.body.innerText.length}catch(e){return -1}})()", v -> {
+                    int len;
+                    try { len = Integer.parseInt(v.replace("\"", "")); } catch (RuntimeException e) { len = -1; }
+                    if (len > 30) { loaded = true; overlay.setVisibility(View.GONE); }
+                    else showProblem("La página se ha cargado vacía (" + len + ").");
+                });
+            }
+
+            @Override
             public void onReceivedError(WebView view, WebResourceRequest req, WebResourceError err) {
-                // Sin internet: página sencilla con los pasos, que sigue contando igual
-                if (req.isForMainFrame()) view.loadUrl("file:///android_asset/sin-conexion.html");
+                if (!req.isForMainFrame()) return;
+                int code = err.getErrorCode();
+                if (code == ERROR_HOST_LOOKUP || code == ERROR_CONNECT || code == ERROR_TIMEOUT) {
+                    // Sin internet: página sencilla con los pasos, que sigue contando igual
+                    view.loadUrl("file:///android_asset/sin-conexion.html");
+                } else {
+                    showProblem("Error al cargar (" + code + "): " + err.getDescription());
+                }
+            }
+
+            @Override
+            public void onReceivedHttpError(WebView view, WebResourceRequest req, WebResourceResponse res) {
+                if (req.isForMainFrame()) showProblem("El servidor respondió " + res.getStatusCode());
+            }
+
+            @Override
+            public void onReceivedSslError(WebView view, SslErrorHandler h, SslError e) {
+                h.cancel();
+                showProblem("Error de seguridad (SSL " + e.getPrimaryError() + "). Revisa la fecha y hora del teléfono.");
             }
         });
-        if (saved == null) web.loadUrl(WEB);
-        else web.restoreState(saved);
+        web.loadUrl(WEB);
+        handler.postDelayed(() -> { if (!loaded) showProblem("La página no termina de cargar."); }, 20000);
 
         askPermissions();
+    }
+
+    /** Capa nativa encima de la web: «Cargando…» y, si algo falla, qué ha pasado y botones para arreglarlo. */
+    private View buildOverlay() {
+        overlay = new LinearLayout(this);
+        overlay.setOrientation(LinearLayout.VERTICAL);
+        overlay.setGravity(Gravity.CENTER);
+        overlay.setBackgroundColor(0xFF0F172A);
+        int pad = (int) (24 * getResources().getDisplayMetrics().density);
+        overlay.setPadding(pad, pad, pad, pad);
+        overlayText = new TextView(this);
+        overlayText.setTextColor(0xFFF8FAFC);
+        overlayText.setTextSize(17);
+        overlayText.setGravity(Gravity.CENTER);
+        overlayText.setText("👣\n\nCargando Pasos…\n\nEl contador ya está funcionando aunque esta pantalla tarde.");
+        overlay.addView(overlayText);
+        Button retry = new Button(this);
+        retry.setText("↻ Reintentar");
+        retry.setOnClickListener(v -> {
+            loaded = false; jsErrors.clear();
+            overlayText.setText("👣\n\nCargando Pasos…");
+            web.loadUrl(WEB);
+            handler.postDelayed(() -> { if (!loaded) showProblem("La página no termina de cargar."); }, 20000);
+        });
+        overlay.addView(retry);
+        Button webView = new Button(this);
+        webView.setText("Actualizar «Android System WebView»");
+        webView.setOnClickListener(v -> openStore("com.google.android.webview"));
+        overlay.addView(webView);
+        return overlay;
+    }
+
+    private void showProblem(String what) {
+        if (loaded) return;
+        String wv = "?";
+        PackageInfo p = WebView.getCurrentWebViewPackage();
+        if (p != null) wv = p.packageName + " " + p.versionName;
+        StringBuilder sb = new StringBuilder("⚠️ No se puede mostrar la pantalla de Pasos.\n\n")
+                .append(what)
+                .append("\n\nEl contador de pasos sigue funcionando (mira la notificación).")
+                .append("\n\nMándale una captura de esto a Claude.\n\n")
+                .append("Android ").append(Build.VERSION.RELEASE).append(" · ").append(Build.MODEL)
+                .append("\nWebView: ").append(wv);
+        for (String e : jsErrors) sb.append("\n• ").append(e);
+        overlayText.setText(sb.toString());
+        overlayText.setTextSize(14);
+        overlay.setVisibility(View.VISIBLE);
+    }
+
+    private void openStore(String pkg) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + pkg)));
+        } catch (RuntimeException e) {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=" + pkg)));
+        }
     }
 
     private void askPermissions() {
@@ -82,12 +196,6 @@ public class MainActivity extends Activity {
     public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
         StepService.start(this);
         web.evaluateJavascript("window.nativeRefresh && window.nativeRefresh()", null);
-    }
-
-    @Override
-    protected void onSaveInstanceState(Bundle out) {
-        super.onSaveInstanceState(out);
-        web.saveState(out);
     }
 
     @Override

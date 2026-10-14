@@ -40,7 +40,7 @@ import java.util.List;
  * y le da los pasos del podómetro del teléfono a través de "AndroidPasos".
  */
 public class MainActivity extends Activity {
-    private static final String WEB = "https://gcalabro12.github.io/Contador-Pasos/";
+    private static final String WEB = "https://gcalabro12.github.io/PC-Body-mind/";
     private static final String HOST = "gcalabro12.github.io";
     private WebView web;
     private LinearLayout overlay;

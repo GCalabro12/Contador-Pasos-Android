@@ -37,15 +37,19 @@ jobs:
         run: gradle assembleRelease --no-daemon --stacktrace
 
       - name: Preparar APK
-        run: cp app/build/outputs/apk/release/app-release.apk Pasos.apk
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk PC-Body-mind.apk
+          cp PC-Body-mind.apk Pasos.apk  # para los enlaces y QR antiguos
 
       - name: Publicar descarga
         uses: softprops/action-gh-release@v2
         with:
           tag_name: app-${{ github.run_number }}
-          name: Pasos v${{ env.VERSION_NAME }}
+          name: PC & Body-mind v${{ env.VERSION_NAME }}
           body: |
-            Descarga **Pasos.apk** en el móvil y ábrelo para instalar o actualizar.
-            Enlace fijo a la última versión: https://github.com/${{ github.repository }}/releases/latest/download/Pasos.apk
-          files: Pasos.apk
+            Descarga **PC-Body-mind.apk** en el móvil y ábrelo para instalar o actualizar.
+            Enlace fijo a la última versión: https://github.com/${{ github.repository }}/releases/latest/download/PC-Body-mind.apk
+          files: |
+            PC-Body-mind.apk
+            Pasos.apk
           make_latest: true

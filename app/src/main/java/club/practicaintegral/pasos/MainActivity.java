@@ -32,6 +32,10 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.webkit.WebChromeClient;
 
+import android.content.ActivityNotFoundException;
+import android.speech.RecognizerIntent;
+import org.json.JSONObject;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -48,6 +52,7 @@ public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final List<String> jsErrors = new ArrayList<>();
     private boolean loaded, problem;
+    private static final int REQ_DICTAR = 42;
     private FrameLayout root;
 
     @Override
@@ -229,6 +234,25 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req != REQ_DICTAR) return;
+        String text = null;
+        if (res == RESULT_OK && data != null) {
+            ArrayList<String> r = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
+            if (r != null && !r.isEmpty()) text = r.get(0);
+        }
+        sendDictation(text, text == null ? "No se ha entendido nada. Pulsa 🎤 y vuelve a intentarlo." : null);
+    }
+
+    private void sendDictation(String text, String err) {
+        if (web == null) return;
+        web.evaluateJavascript("window.nativeDictation && window.nativeDictation("
+                + (text == null ? "null" : JSONObject.quote(text)) + ","
+                + (err == null ? "null" : JSONObject.quote(err)) + ")", null);
+    }
+
+    @Override
     public void onBackPressed() {
         if (web != null && web.canGoBack()) web.goBack();
         else moveTaskToBack(true); // no se cierra: el contador y la música siguen
@@ -309,6 +333,21 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface public void askPermissions() { runOnUiThread(MainActivity.this::askPermissions); }
+
+        /** Abre el dictado por voz de Google del teléfono; el texto vuelve a la web con nativeDictation(). */
+        @JavascriptInterface public void dictate() {
+            runOnUiThread(() -> {
+                Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+                i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+                i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES");
+                i.putExtra(RecognizerIntent.EXTRA_PROMPT, "¿A qué vas a dedicar este bloque?");
+                try {
+                    startActivityForResult(i, REQ_DICTAR);
+                } catch (ActivityNotFoundException e) {
+                    sendDictation(null, "Este teléfono no tiene el dictado por voz de Google. Usa el micrófono del teclado.");
+                }
+            });
+        }
 
         @JavascriptInterface public String version() {
             try {
